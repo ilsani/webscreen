@@ -56,7 +56,6 @@ static void do_print(const char* target_url, const char* in_file, const char* ou
     /* fclose(fd); */
     
   }
-
 }
 
 int main(int argc, char** argv) {

@@ -45,7 +45,6 @@ void browser_close(Browser* browser) {
     free(browser->requested_uri);
 
   free(browser);
-
 }
 
 Browser* browser_create(const char* out_dir) {
@@ -71,18 +70,18 @@ Browser* browser_create(const char* out_dir) {
   
   webkit_web_view_set_settings(WEBKIT_WEB_VIEW(browser->webview), settings);
   
-  g_signal_connect(browser->webview, "load-changed", G_CALLBACK(on_webview_load_changed), (Browser *)browser);
+  g_signal_connect(browser->webview,
+		   "load-changed",
+		   G_CALLBACK(on_webview_load_changed),
+		   (Browser *)browser);
 
-  // Ignore SSL errors
   webkit_web_context_set_tls_errors_policy(webkit_web_view_get_context(WEBKIT_WEB_VIEW(browser->webview)),
 					   WEBKIT_TLS_ERRORS_POLICY_IGNORE);
 
   gtk_widget_show_all(window);
   
   return browser;
-  
 }
-
 
 static char* get_screenshot_filename(const char* target_uri) {
 
@@ -99,7 +98,6 @@ static char* get_screenshot_filename(const char* target_uri) {
   return r;
 }
 
-
 static void done(Browser* browser) {
 
   --todo;
@@ -108,7 +106,6 @@ static void done(Browser* browser) {
     browser_close(browser);
     gtk_main_quit();
   }
-
 }
 
 static void take_webview_snapshot(WebKitWebView* webview, GAsyncResult* result, Browser* browser) {
@@ -133,7 +130,6 @@ static void take_webview_snapshot(WebKitWebView* webview, GAsyncResult* result, 
   }
 
   done(browser);
-
 }
 
 static void on_webview_load_changed(WebKitWebView* webview, WebKitLoadEvent status, Browser* browser) {
@@ -145,11 +141,10 @@ static void on_webview_load_changed(WebKitWebView* webview, WebKitLoadEvent stat
 
   webkit_web_view_get_snapshot(webview,
 			       WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT,
-			       WEBKIT_SNAPSHOT_OPTIONS_NONE, // WEBKIT_SNAPSHOT_OPTIONS_TRANSPARENT_BACKGROUND ?
+			       WEBKIT_SNAPSHOT_OPTIONS_NONE,
 			       NULL,
 			       (GAsyncReadyCallback)take_webview_snapshot,
 			       browser);
-
 }
 
 // ///////////////////////////////////////////////////////////
