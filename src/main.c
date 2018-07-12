@@ -153,39 +153,39 @@ static void do_print(const char* target_url, const char* in_file, const char* ou
 
   if (!target_url) {
 
-    /* buffer_t buffer = { */
-    /*   .len = 0, */
-    /*   .can_produce = PTHREAD_COND_INITIALIZER, */
-    /*   .can_consume = PTHREAD_COND_INITIALIZER */
-    /* }; */
+    buffer_t buffer = {
+      .len = 0,
+      .can_produce = PTHREAD_COND_INITIALIZER,
+      .can_consume = PTHREAD_COND_INITIALIZER
+    };
   
-    /* pthread_mutex_init(&buffer.mutex, NULL); */
-    /* pthread_mutex_lock(&can_close_mutex);   */
+    pthread_mutex_init(&buffer.mutex, NULL);
+    pthread_mutex_lock(&can_close_mutex);
 
-    /* pthread_t producer; */
-    /* pthread_t workers[WORKERS_N]; */
+    pthread_t producer;
+    pthread_t workers[WORKERS_N];
 
-    /* pthread_create(&producer, NULL, worker_setup_jobs, (void*)&buffer); */
+    pthread_create(&producer, NULL, worker_setup_jobs, (void*)&buffer);
   
-    /* for (int i = 0; i < WORKERS_N; ++i) { */
+    for (int i = 0; i < WORKERS_N; ++i) {
 
-    /*   worker_data_t* worker_data = malloc(sizeof(worker_data_t)); */
-    /*   worker_data->buffer = &buffer; */
-    /*   worker_data->worker_id = i; */
+      worker_data_t* worker_data = malloc(sizeof(worker_data_t));
+      worker_data->buffer = &buffer;
+      worker_data->worker_id = i;
     
-    /*   pthread_create(&workers[i], NULL, worker_run, (void *)worker_data); */
-    /* } */
+      pthread_create(&workers[i], NULL, worker_run, (void *)worker_data);
+    }
 
-    /* pthread_join(producer, NULL); */
+    pthread_join(producer, NULL);
 
-    /* pthread_cond_broadcast(&buffer.can_consume); */
-    /* pthread_mutex_unlock(&can_close_mutex); */
+    pthread_cond_broadcast(&buffer.can_consume);
+    pthread_mutex_unlock(&can_close_mutex);
 
-    /* for (int i = 0; i < WORKERS_N; ++i) { */
-    /*   pthread_join(workers[i], NULL); */
-    /* } */
+    for (int i = 0; i < WORKERS_N; ++i) {
+      pthread_join(workers[i], NULL);
+    }
 
-    /* gtk_main_quit(); */
+    gtk_main_quit();
 
   }
   else {
