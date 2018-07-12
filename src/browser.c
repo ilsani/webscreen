@@ -24,27 +24,32 @@ static void on_webview_load_changed(WebKitWebView* webview, WebKitLoadEvent stat
 // Public methods
 // ///////////////////////////////////////////////////////////
 
-void browser_navigate_to(Browser* browser, const char* target_url) {
+void browser_navigate_to(Browser* browser, const char* url) {
 
   ++todo;
 
-  browser->requested_uri = g_strdup(target_url);
+  browser->requested_uri = g_strdup(url);
 
-  webkit_web_view_load_uri(WEBKIT_WEB_VIEW(browser->webview), target_url);
+  webkit_web_view_load_uri(WEBKIT_WEB_VIEW(browser->webview), url);
 }
 
-void browser_close(Browser* browser) {
+void browser_close(Browser** browser) {
 
   if (!browser)
     return;
 
-  if (browser->out_dir)
-    free(browser->out_dir);
+  Browser* b = *browser;
 
-  if (browser->requested_uri)
-    free(browser->requested_uri);
+  gtk_widget_destroy(b->window);
 
-  free(browser);
+  if (b->out_dir)
+    free(b->out_dir);
+
+  if (b->requested_uri)
+    free(b->requested_uri);
+
+  free(*browser);
+  *browser = NULL;
 }
 
 Browser* browser_create(const char* out_dir) {
@@ -52,11 +57,11 @@ Browser* browser_create(const char* out_dir) {
   Browser* browser = malloc(sizeof(Browser));
   browser->out_dir = g_strdup(out_dir);
 
-  GtkWidget* window = gtk_offscreen_window_new();
-  gtk_window_set_default_size(GTK_WINDOW(window), 1280, 720);
+  browser->window = gtk_offscreen_window_new();
+  gtk_window_set_default_size(GTK_WINDOW(browser->window), 1280, 720);
 
   browser->webview = webkit_web_view_new();
-  gtk_container_add(GTK_CONTAINER(window), browser->webview);
+  gtk_container_add(GTK_CONTAINER(browser->window), browser->webview);
 
   WebKitSettings* settings = webkit_settings_new_with_settings(
       "user-agent", USER_AGENT,
@@ -78,7 +83,7 @@ Browser* browser_create(const char* out_dir) {
   webkit_web_context_set_tls_errors_policy(webkit_web_view_get_context(WEBKIT_WEB_VIEW(browser->webview)),
 					   WEBKIT_TLS_ERRORS_POLICY_IGNORE);
 
-  gtk_widget_show_all(window);
+  gtk_widget_show_all(browser->window);
   
   return browser;
 }
@@ -103,8 +108,8 @@ static void done(Browser* browser) {
   --todo;
   
   if (!todo) {
-    browser_close(browser);
-    gtk_main_quit();
+    browser_close(&browser);
+    //gtk_main_quit();
   }
 }
 
