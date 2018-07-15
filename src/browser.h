@@ -2,6 +2,8 @@
 #ifndef __BROWSER_H__
 #define __BROWSER_H__
 
+#include <pthread.h>
+
 typedef struct {
 
   GtkWidget* webview;
@@ -9,6 +11,9 @@ typedef struct {
   
   char* out_dir;
   char* requested_uri;
+
+  pthread_cond_t is_loading;
+  pthread_mutex_t is_loading_mutex;
 
 } Browser;
 

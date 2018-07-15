@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <webkit2/webkit2.h>
-// #include <pthread.h>
+
 
 #include "browser.h"
 #include "str_utils.h"
@@ -31,6 +31,8 @@ void browser_navigate_to(Browser* browser, const char* url) {
   browser->requested_uri = g_strdup(url);
 
   webkit_web_view_load_uri(WEBKIT_WEB_VIEW(browser->webview), url);
+
+  //pthread_cond_wait(&browser->is_loading, &browser->is_loading_mutex);
 }
 
 void browser_close(Browser** browser) {
@@ -50,12 +52,17 @@ void browser_close(Browser** browser) {
 
   free(*browser);
   *browser = NULL;
+
+  //pthread_cond_signal(&b->is_loading);
 }
 
 Browser* browser_create(const char* out_dir) {
 
   Browser* browser = malloc(sizeof(Browser));
   browser->out_dir = g_strdup(out_dir);
+  
+  /* pthread_mutex_init(&browser->is_loading_mutex, NULL); */
+  /* pthread_cond_init(&browser->is_loading, NULL); */
 
   browser->window = gtk_offscreen_window_new();
   gtk_window_set_default_size(GTK_WINDOW(browser->window), 1280, 720);

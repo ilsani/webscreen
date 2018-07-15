@@ -10,20 +10,19 @@
 
 #include "browser.h"
 
-#define WORKERS_N (5)
-#define JOB_BUFFER_SIZE (5)
+#define WORKER_N (5)
+#define JOB_BUFFER_CAPACITY (5)
 
 #define LINE_BUF_SIZE (2048)
 
-pthread_mutex_t can_close_mutex;
-
 typedef struct {
 
-  // buffer
-  char jobs[JOB_BUFFER_SIZE][2048];
+  // queue
+  char jobs[JOB_BUFFER_CAPACITY][2048];
 
-  // number of items in the buffer
-  size_t len;
+  size_t jobs_size;
+  size_t jobs_rear;
+  size_t jobs_front;
 
   // add/remove data from buffer
   pthread_mutex_t mutex;
@@ -61,19 +60,31 @@ static FILE* get_file(const char* filename) {
   return fd;
 }
 
-static int worker_can_close(size_t worker_id, pthread_mutex_t* mutex) {
+static const char* worker_get_job(worker_data_t* worker_data, buffer_t* buffer) {
 
-  switch (pthread_mutex_trylock(mutex)) {
-    // if we got the lock, unlock and return true
-  case 0:
-    pthread_mutex_unlock(mutex);
-    return 1;
-    // return false if mutex was locked
-  case EBUSY:
-    return 0;
+  pthread_mutex_lock(&buffer->mutex);
+
+  while (buffer->jobs_size == 0) {
+    pthread_cond_wait(&buffer->can_consume, &buffer->mutex);
   }
-  
-  return 0;
+
+  char* url = buffer->jobs[buffer->jobs_front];
+  printf("[C][%ld] consuming %s ...\n", worker_data->worker_id, url);
+
+  if (strcmp(url, "<EOF>")) {
+    buffer->jobs_front = (buffer->jobs_front + 1) % JOB_BUFFER_CAPACITY;
+    buffer->jobs_size = buffer->jobs_size - 1;
+    pthread_cond_signal(&buffer->can_produce);
+  }
+  else {
+    // Propagate EOF to the others workers
+    pthread_cond_signal(&buffer->can_consume);
+    url = NULL;
+  }
+
+  pthread_mutex_unlock(&buffer->mutex);
+
+  return url;
 }
 
 static void* worker_run(void* arg) {
@@ -82,42 +93,45 @@ static void* worker_run(void* arg) {
   buffer_t* buffer = worker_data->buffer;
 
   while (1) {
-
-    pthread_mutex_lock(&buffer->mutex);
-
-    while (buffer->len == 0 && !worker_can_close(worker_data->worker_id, &can_close_mutex)) {
-      pthread_cond_wait(&buffer->can_consume, &buffer->mutex);
-      sleep(1);
-    }
     
-    if (buffer->len > 0) {
-      buffer->len = buffer->len - 1;
-      const char* url = buffer->jobs[buffer->len];
+    const char* url = worker_get_job(worker_data, buffer);
 
-      pthread_cond_signal(&buffer->can_produce);
-      pthread_mutex_unlock(&buffer->mutex);
-      
-      if (!url || strlen(url) <= 0) {
-	continue;
-      }
-
-      printf("[C][%ld] %s\n", worker_data->worker_id, url);
-
-      const char* out_dir = "/dev/shm/screenshots/";
-      Browser* browser = browser_create(out_dir);
-      browser_navigate_to(browser, url);
-    }
-    else {
-      pthread_mutex_unlock(&buffer->mutex);
+    if (!url) {
       break;
     }
 
+    /* const char* out_dir = "/dev/shm/screenshots/"; */
+    /* Browser* browser = browser_create(out_dir); */
+    /* browser_navigate_to(browser, url); */
   }
 
   return NULL;
 }
 
-static void* worker_setup_jobs(void* arg) {
+static void setup_jobs_add(buffer_t* buffer, const char* url) {
+  
+  pthread_mutex_lock(&buffer->mutex);
+
+  if (buffer->jobs_size == JOB_BUFFER_CAPACITY) {
+    pthread_cond_wait(&buffer->can_produce, &buffer->mutex);
+  }
+
+  buffer->jobs_rear = (buffer->jobs_rear + 1) % JOB_BUFFER_CAPACITY;
+
+  snprintf(buffer->jobs[buffer->jobs_rear],
+	   sizeof(buffer->jobs[buffer->jobs_rear]),
+	   "%s",
+	   url);
+  
+  buffer->jobs_size = buffer->jobs_size + 1;
+
+  printf("[P] adding %s ...\n", url);
+
+  pthread_cond_signal(&buffer->can_consume);
+  pthread_mutex_unlock(&buffer->mutex);
+}
+
+static void* setup_jobs(void* arg) {
   
   buffer_t* buffer = (buffer_t *)arg;
 
@@ -131,74 +145,86 @@ static void* worker_setup_jobs(void* arg) {
       continue;
     }
 
-    pthread_mutex_lock(&buffer->mutex);
-
-    if (buffer->len == JOB_BUFFER_SIZE) {
-      pthread_cond_wait(&buffer->can_produce, &buffer->mutex);
-    }
-
-    snprintf(buffer->jobs[buffer->len], sizeof(buffer->jobs[buffer->len]), "%s", line);
-    buffer->len = buffer->len + 1;
-
-    pthread_cond_signal(&buffer->can_consume);
-    pthread_mutex_unlock(&buffer->mutex);
+    setup_jobs_add(buffer, line);
   }
+
+  setup_jobs_add(buffer, "<EOF>");
 
   fclose(fd);
 
   return NULL;
 }
 
+static buffer_t* create_job_buffer() {
+
+  buffer_t* buffer = malloc(sizeof(buffer_t));
+
+  buffer->jobs_size = 0;
+  buffer->jobs_front = 0;
+  buffer->jobs_rear = JOB_BUFFER_CAPACITY - 1;
+
+  pthread_cond_init(&buffer->can_produce, NULL);
+  pthread_cond_init(&buffer->can_consume, NULL);
+  pthread_mutex_init(&buffer->mutex, NULL);
+
+  return buffer;
+}
+
 static void do_print(const char* target_url, const char* in_file, const char* out_dir) {
 
-  if (!target_url) {
+  if (1) {
 
-    buffer_t buffer = {
-      .len = 0,
-      .can_produce = PTHREAD_COND_INITIALIZER,
-      .can_consume = PTHREAD_COND_INITIALIZER
-    };
-  
-    pthread_mutex_init(&buffer.mutex, NULL);
-    pthread_mutex_lock(&can_close_mutex);
+    buffer_t* buffer = create_job_buffer();
 
     pthread_t producer;
-    pthread_t workers[WORKERS_N];
-
-    pthread_create(&producer, NULL, worker_setup_jobs, (void*)&buffer);
+    pthread_t workers[WORKER_N];
   
-    for (int i = 0; i < WORKERS_N; ++i) {
+    if (pthread_create(&producer, NULL, setup_jobs, (void*)buffer)) {
+      perror("Unable to create producer thread: ");
+      exit(-1);
+    }
 
-      worker_data_t* worker_data = malloc(sizeof(worker_data_t));
-      worker_data->buffer = &buffer;
-      worker_data->worker_id = i;
-    
-      pthread_create(&workers[i], NULL, worker_run, (void *)worker_data);
+    worker_data_t* worker_data[WORKER_N];
+  
+    for (int i = 0; i < WORKER_N; ++i) {
+      worker_data[i] = malloc(sizeof(worker_data_t));
+      worker_data[i]->buffer = buffer;
+      worker_data[i]->worker_id = i;
+      if (pthread_create(&workers[i], NULL, worker_run, (void *)worker_data[i])) {
+	perror("Unable to create worker thread: ");
+	exit(-1);
+      }
     }
 
     pthread_join(producer, NULL);
+    printf("pthread_join() producer - after\n");
 
-    pthread_cond_broadcast(&buffer.can_consume);
-    pthread_mutex_unlock(&can_close_mutex);
-
-    for (int i = 0; i < WORKERS_N; ++i) {
+    for (int i = 0; i < WORKER_N; ++i) {
       pthread_join(workers[i], NULL);
     }
 
-    gtk_main_quit();
+    for (int i = 0; i < WORKER_N; ++i) {
+      free(worker_data[i]);
+      worker_data[i] = NULL;
+    }
+
+    free(buffer);
+    buffer = NULL;
+
+    // gtk_main_quit();
 
   }
-  else {
+//else {
     /* Browser* browser = browser_create(out_dir); */
     /* browser_navigate_to(browser, target_url); */
-  }
+    //  }
 }
 
 int main(int argc, char** argv) {
   
-  if (argc <= 1 || argc != 5) {
-    exit(1);
-  }
+  /* if (argc <= 1 || argc != 5) { */
+  /*   exit(1); */
+  /* } */
 
   int opt;
   char* in_file = NULL;
@@ -223,17 +249,17 @@ int main(int argc, char** argv) {
     }
   }
 
-  if ((!in_file && !target_url) || !out_dir) {
-    exit(1);
-  }
+  /* if ((!in_file && !target_url) || !out_dir) { */
+  /*   exit(1); */
+  /* } */
+  
+  //XInitThreads();
 
-  XInitThreads();
-
-  gtk_init(&argc, &argv);
+  //gtk_init(&argc, &argv);
 
   do_print(target_url, in_file, out_dir);
 
-  gtk_main();
+  //gtk_main();
   
   return 0;
 }
